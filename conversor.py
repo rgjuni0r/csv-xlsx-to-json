@@ -21,6 +21,11 @@ Pilares (CTO):
 - Observabilidade: tqdm (opcional) + progress.json para UI/painel
 - Entrega: split do output por N partes (garantidas) ou por X registros
 - DX: gera exemplos reais + template + keys antes do processamento completo
+
+Correções aplicadas:
+- XLSX: pula linhas totalmente vazias (evita objetos com tudo null)
+- XLSX: header trim (remove espaços no fim/início) + nomeia colunas vazias (__col_1...)
+- CSV (opcional): também pula linha totalmente vazia (seguro)
 """
 
 
@@ -442,9 +447,18 @@ def iter_csv_records(
         headers = [str(h) for h in raw_headers]
         if clean_headers:
             headers = [clean_text(h) for h in headers]
+
+        # trim + fallback para headers vazios
+        headers = [(h.strip() if isinstance(h, str) else h) for h in headers]
+        headers = [h if h != "" else f"__col_{i+1}" for i, h in enumerate(headers)]
+
         headers, _ = make_unique_headers(headers)
 
         for row in reader:
+            # ✅ pula linha totalmente vazia no CSV (seguro)
+            if not row or all((c is None) or (isinstance(c, str) and c.strip() == "") for c in row):
+                continue
+
             obj: Dict[str, Any] = {}
             for i, val in enumerate(row):
                 key = headers[i] if i < len(headers) else f"__extra_{i - len(headers) + 1}"
@@ -497,11 +511,28 @@ def iter_xlsx_records(
     headers = ["" if h is None else str(h) for h in header]
     if clean_headers:
         headers = [clean_text(h) for h in headers]
+
+    # ✅ trim + fallback para headers vazios (evita key "")
+    headers = [(h.strip() if isinstance(h, str) else h) for h in headers]
+    headers = [h if h != "" else f"__col_{i+1}" for i, h in enumerate(headers)]
+
     headers, _ = make_unique_headers(headers)
 
+    def is_empty_cell(v: Any) -> bool:
+        if v is None:
+            return True
+        if isinstance(v, str) and v.strip() == "":
+            return True
+        return False
+
     for row in rows:
-        obj: Dict[str, Any] = {}
         row_vals = list(row) if row is not None else []
+
+        # ✅ pula linha totalmente vazia (ou “vazia” com strings em branco)
+        if not row_vals or all(is_empty_cell(v) for v in row_vals):
+            continue
+
+        obj: Dict[str, Any] = {}
         for i, val in enumerate(row_vals):
             key = headers[i] if i < len(headers) else f"__extra_{i - len(headers) + 1}"
             v: Any = json_safe(val)
